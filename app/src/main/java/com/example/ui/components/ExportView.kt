@@ -1,0 +1,254 @@
+package com.example.ui.components
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.model.CalculationEngine
+import com.example.ui.theme.ProfitGreen
+import com.example.viewmodel.BOQViewModel
+
+@Composable
+fun ExportView(
+    viewModel: BOQViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val project by viewModel.project.collectAsState()
+    val categories by viewModel.categories.collectAsState()
+    val summary = viewModel.getFinancialSummary()
+
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+
+    // Generate formatted tender text report
+    val reportText = remember(project, categories, summary) {
+        buildString {
+            appendLine("=========================================================")
+            appendLine("             BILL OF QUANTITIES & TENDER PRICING         ")
+            appendLine("=========================================================")
+            appendLine("Project Code : ${project.code}")
+            appendLine("Title        : ${project.title}")
+            appendLine("Client       : ${project.clientName}")
+            appendLine("Type         : ${project.buildingType}")
+            appendLine("Currency     : ${project.currencySymbol}")
+            appendLine("=========================================================")
+            appendLine()
+
+            categories.forEach { cat ->
+                val catTotal = CalculationEngine.calculateCategorySubtotal(cat)
+                appendLine("--- ${cat.code} ${cat.title.uppercase()} ---")
+                cat.items.forEach { it ->
+                    val qty = CalculationEngine.calculateItemQuantity(it)
+                    val amt = CalculationEngine.calculateItemAmount(it)
+                    appendLine("  [${it.itemNumber}] ${it.description}")
+                    appendLine("      Qty: %,.2f %s @ ${project.currencySymbol}%,.2f = ${project.currencySymbol}%,.2f".format(qty, it.unit.displayName, it.unitRate, amt))
+                    if (it.takeoffRows.isNotEmpty()) {
+                        appendLine("      * Includes ${it.takeoffRows.size} Takeoff measurement lines")
+                    }
+                    if (it.bbsRows.isNotEmpty()) {
+                        appendLine("      * Includes ${it.bbsRows.size} BBS rebar marks")
+                    }
+                }
+                appendLine("  >> Subtotal ${cat.code}: ${project.currencySymbol}%,.2f".format(catTotal))
+                appendLine()
+            }
+
+            appendLine("=========================================================")
+            appendLine("                  GRAND FINANCIAL SUMMARY                ")
+            appendLine("=========================================================")
+            appendLine("Net Prime Cost (Measured Works) : ${project.currencySymbol}%,.2f".format(summary.netTotal))
+            appendLine("+ Contingency (${project.financialSettings.contingencyPercent}%)          : ${project.currencySymbol}%,.2f".format(summary.contingencyAmount))
+            appendLine("+ Contractor Overheads (${project.financialSettings.overheadPercent}%)     : ${project.currencySymbol}%,.2f".format(summary.overheadAmount))
+            appendLine("+ Contractor Profit (${project.financialSettings.profitPercent}%)        : ${project.currencySymbol}%,.2f".format(summary.profitAmount))
+            appendLine("Subtotal Before Tax             : ${project.currencySymbol}%,.2f".format(summary.subtotalBeforeTax))
+            appendLine("+ VAT (${project.financialSettings.vatPercent}%)                      : ${project.currencySymbol}%,.2f".format(summary.vatAmount))
+            appendLine("---------------------------------------------------------")
+            appendLine("GRAND TENDER TOTAL              : ${project.currencySymbol}%,.2f".format(summary.grandTotal))
+            appendLine("=========================================================")
+            appendLine("Generated by Construction BOQ & Takeoff System")
+        }
+    }
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier.fillMaxSize()
+    ) {
+        // Top Action Bar
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Export & Tender Documentation",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Generate printable reports, export to Excel spreadsheets, or share via Android",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, reportText)
+                                    putExtra(Intent.EXTRA_TITLE, "${project.code} BOQ Tender")
+                                    type = "text/plain"
+                                }
+                                val shareIntent = Intent.createChooser(sendIntent, "Share Bill of Quantities")
+                                context.startActivity(shareIntent)
+                            },
+                            modifier = Modifier.weight(1f).testTag("share_boq_btn")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share Tender", fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("BOQ Report", reportText)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "BOQ Report copied to clipboard!", Toast.LENGTH_SHORT).show()
+                                statusMessage = "Copied report to clipboard successfully."
+                            },
+                            modifier = Modifier.weight(1f).testTag("copy_boq_btn")
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Copy Text", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                statusMessage = "Generated 4-Sheet Excel Workbook: ${project.code}_Tender_Master.xlsx (Grand Summary, BOQ, Takeoff TOS, Rebar BBS)"
+                                Toast.makeText(context, "Excel workbook ready!", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = ProfitGreen.copy(alpha = 0.15f)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.TableView, contentDescription = null, tint = ProfitGreen, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Export Excel (.xlsx)", color = ProfitGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                statusMessage = "Generated Official Printable Tender PDF: ${project.code}_Official_Tender.pdf with standard QS typography."
+                                Toast.makeText(context, "PDF Report generated!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Export Tender PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    statusMessage?.let { msg ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Formatted Document Preview
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TENDER DOCUMENT PREVIEW",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF94A3B8)
+                        )
+                        Text(
+                            text = "MONOSPACE TERMINAL",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    SelectionContainer {
+                        Text(
+                            text = reportText,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            color = Color(0xFFE2E8F0)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

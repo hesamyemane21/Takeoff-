@@ -1,0 +1,6 @@
+{
+  "name": "Construction BOQ",
+  "description": "Construction Takeoff & Bill of Quantities (BOQ) System with dynamic measurement sheets, bar bending schedule, and tender financial summary.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
